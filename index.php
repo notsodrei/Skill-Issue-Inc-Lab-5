@@ -1,19 +1,30 @@
 <?php
 /**
  * Lab Activity 4: To-do List Web App (COMP016 - Web Development)
- * Single-page task manager: Create, Read, Update, Delete using PHP Sessions.
+ * Single-page task manager backed by MySQL.
  */
 
-// 1. Session management: must run before any HTML output
-session_start();
 date_default_timezone_set('Asia/Manila');
 
 const NAME_MIN = 3;
 const NAME_MAX = 100;
 const DESC_MAX = 255;
 
-$_SESSION['tasks']   = $_SESSION['tasks']   ?? [];
-$_SESSION['next_id'] = $_SESSION['next_id'] ?? 1;
+$dbHost = getenv('DB_HOST') ?: '127.0.0.1';
+$dbName = getenv('DB_NAME') ?: 'task_db';
+$dbUser = getenv('DB_USER') ?: 'root';
+$dbPass = getenv('DB_PASS') ?: '';
+
+$pdo = new PDO(
+    "mysql:host={$dbHost};dbname={$dbName};charset=utf8mb4",
+    $dbUser,
+    $dbPass,
+    [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+    ]
+);
 
 /* ---------- Helpers ---------- */
 
@@ -50,6 +61,14 @@ function validate_task(string $name, string $description): array
     }
 
     return $errors;
+}
+
+function task_exists(PDO $pdo, int $id): bool
+{
+    $statement = $pdo->prepare('SELECT id FROM tasks WHERE id = :id');
+    $statement->execute(['id' => $id]);
+
+    return $statement->fetchColumn() !== false;
 }
 
 function redirect_to(string $view): void
@@ -107,9 +126,11 @@ if (!is_string($view) || !isset($views[$view])) {
 }
 
 $editId = null;
-if (isset($_GET['edit']) && is_string($_GET['edit']) && ctype_digit($_GET['edit'])
-    && isset($_SESSION['tasks'][(int) $_GET['edit']])) {
-    $editId = (int) $_GET['edit'];
+if (isset($_GET['edit']) && is_string($_GET['edit']) && ctype_digit($_GET['edit'])) {
+    $candidateId = (int) $_GET['edit'];
+    if (task_exists($pdo, $candidateId)) {
+        $editId = $candidateId;
+    }
 }
 
 /* ---------- Form handling (POST) ---------- */
@@ -120,8 +141,9 @@ $postedOld = false;
 
 // Request guarding: only act on POST requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = post_string('action');
-    $id     = (int) post_string('id');
+    $action  = post_string('action');
+    $idValue = post_string('id');
+    $id      = ctype_digit($idValue) ? (int) $idValue : 0;
 
     switch ($action) {
         case 'add':
@@ -130,13 +152,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors      = validate_task($name, $description);
 
             if (!$errors) {
-                $newId = $_SESSION['next_id']++;
-                $_SESSION['tasks'][$newId] = [
-                    'id'          => $newId,
+                $statement = $pdo->prepare(
+                    'INSERT INTO tasks (task_name, task_description) VALUES (:name, :description)'
+                );
+                $statement->execute([
                     'name'        => $name,
                     'description' => $description,
-                    'completed'   => false,
-                ];
+                ]);
                 redirect_to($view);
             }
 
@@ -145,7 +167,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             break;
 
         case 'update':
-            if (!isset($_SESSION['tasks'][$id])) {
+            if ($id === 0 || !task_exists($pdo, $id)) {
                 redirect_to($view);
             }
 
@@ -154,8 +176,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors      = validate_task($name, $description);
 
             if (!$errors) {
-                $_SESSION['tasks'][$id]['name']        = $name;
-                $_SESSION['tasks'][$id]['description'] = $description;
+                $statement = $pdo->prepare(
+                    'UPDATE tasks SET task_name = :name, task_description = :description WHERE id = :id'
+                );
+                $statement->execute([
+                    'name'        => $name,
+                    'description' => $description,
+                    'id'          => $id,
+                ]);
                 redirect_to($view);
             }
 
@@ -165,22 +193,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             break;
 
         case 'toggle':
-            if (isset($_SESSION['tasks'][$id])) {
-                $_SESSION['tasks'][$id]['completed'] = !$_SESSION['tasks'][$id]['completed'];
+            if ($id > 0 && task_exists($pdo, $id)) {
+                $statement = $pdo->prepare(
+                    "UPDATE tasks SET status = CASE WHEN status = 'pending' "
+                    . "THEN 'completed' ELSE 'pending' END WHERE id = :id"
+                );
+                $statement->execute(['id' => $id]);
             }
             redirect_to($view);
             break;
 
         case 'delete':
-            unset($_SESSION['tasks'][$id]);
+            if ($id === 0 || !task_exists($pdo, $id)) {
+                redirect_to($view);
+            }
+
+            $statement = $pdo->prepare('DELETE FROM tasks WHERE id = :id');
+            $statement->execute(['id' => $id]);
             redirect_to($view);
             break;
 
         case 'clear_completed':
-            $_SESSION['tasks'] = array_filter(
-                $_SESSION['tasks'],
-                fn(array $task): bool => !$task['completed']
-            );
+            $statement = $pdo->prepare('DELETE FROM tasks WHERE status = :status');
+            $statement->execute(['status' => 'completed']);
             redirect_to($view);
             break;
 
@@ -191,15 +226,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Pre-fill the form when editing (and the task has not just failed validation)
 if ($editId !== null && !$postedOld) {
+    $statement = $pdo->prepare(
+        'SELECT task_name, task_description FROM tasks WHERE id = :id'
+    );
+    $statement->execute(['id' => $editId]);
+    $task = $statement->fetch();
     $old = [
-        'name'        => $_SESSION['tasks'][$editId]['name'],
-        'description' => $_SESSION['tasks'][$editId]['description'],
+        'name'        => $task['task_name'],
+        'description' => $task['task_description'],
     ];
 }
 
 /* ---------- Data for rendering ---------- */
 
-$allTasks = array_values($_SESSION['tasks']);
+$statement = $pdo->query('SELECT id, task_name, task_description, status FROM tasks');
+$allTasks = array_map(
+    fn(array $task): array => [
+        'id'          => (int) $task['id'],
+        'name'        => $task['task_name'],
+        'description' => $task['task_description'],
+        'completed'   => $task['status'] === 'completed',
+    ],
+    $statement->fetchAll()
+);
 $counts   = [
     'all'       => count($allTasks),
     'todo'      => count(array_filter($allTasks, fn(array $t): bool => !$t['completed'])),
