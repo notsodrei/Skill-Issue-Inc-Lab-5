@@ -110,23 +110,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             break;
 
         case 'update':
-            // TODO: Teammates will add UPDATE PDO query here
-            redirect_to($view);
+            $id = filter_var(post_string('id'), FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 1],
+            ]);
+            if ($id === false) {
+                redirect_to($view);
+            }
+
+            $stmt = $pdo->prepare("SELECT id FROM tasks WHERE id = :id");
+            $stmt->execute(['id' => $id]);
+            if ($stmt->fetchColumn() === false) {
+                redirect_to($view);
+            }
+
+            $name        = post_string('task_name');
+            $description = post_string('task_description');
+            $errors      = validate_task($name, $description);
+
+            if (!$errors) {
+                $stmt = $pdo->prepare("UPDATE tasks SET task_name = :name, task_description = :description WHERE id = :id");
+                $stmt->execute([
+                    'name'        => $name,
+                    'description' => $description,
+                    'id'          => $id,
+                ]);
+                redirect_to($view);
+            }
+
+            $editId    = $id;
+            $old       = ['name' => $name, 'description' => $description];
+            $postedOld = true;
             break;
 
         case 'toggle':
-            // TODO: Teammates will add toggle (UPDATE status) PDO query here
+            $id = filter_var(post_string('id'), FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 1],
+            ]);
+            if ($id === false) {
+                redirect_to($view);
+            }
+
+            $stmt = $pdo->prepare("SELECT status FROM tasks WHERE id = :id");
+            $stmt->execute(['id' => $id]);
+            $status = $stmt->fetchColumn();
+            if ($status === false) {
+                redirect_to($view);
+            }
+
+            $newStatus = $status === 'completed' ? 'pending' : 'completed';
+            $stmt = $pdo->prepare("UPDATE tasks SET status = :status WHERE id = :id");
+            $stmt->execute([
+                'status' => $newStatus,
+                'id'     => $id,
+            ]);
             redirect_to($view);
             break;
 
         case 'delete':
-            // TODO: Teammates will add DELETE PDO query here
+            $id = filter_var(post_string('id'), FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 1],
+            ]);
+            if ($id === false) {
+                redirect_to($view);
+            }
+
+            $stmt = $pdo->prepare("SELECT id FROM tasks WHERE id = :id");
+            $stmt->execute(['id' => $id]);
+            if ($stmt->fetchColumn() === false) {
+                redirect_to($view);
+            }
+
+            $stmt = $pdo->prepare("DELETE FROM tasks WHERE id = :id");
+            $stmt->execute(['id' => $id]);
             redirect_to($view);
             break;
 
         case 'clear_completed':
-            // TODO: Teammates will add DELETE where status='completed' PDO query here
-            redirect_to($view);
+            $stmt = $pdo->prepare("DELETE FROM tasks WHERE status = :status");
+            $stmt->execute(['status' => 'completed']);
+            redirect_to('completed');
             break;
 
         default:
