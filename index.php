@@ -4,7 +4,7 @@
  * Single-page task manager: Create, Read, Update, Delete using PDO.
  */
 
-// 1. Database connection (Replaces session_start)
+// 1. Database connection
 require_once 'db.php';
 date_default_timezone_set('Asia/Manila');
 
@@ -14,6 +14,8 @@ const DESC_MAX = 255;
 
 /* ---------- Helpers ---------- */
 
+// Escapes special characters (< > " ' &) so user input can't run as HTML or JS (XSS protection).
+// Every user-controlled value is printed through this function.
 function e(string $value): string {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
@@ -132,17 +134,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Pre-fill the form when editing 
+// Pre-fill the form when editing
 if ($editId !== null && !$postedOld) {
     $stmt = $pdo->prepare("SELECT task_name, task_description FROM tasks WHERE id = :id");
     $stmt->execute(['id' => $editId]);
     $taskToEdit = $stmt->fetch(PDO::FETCH_ASSOC);
-    
+
     if ($taskToEdit) {
         $old = [
             'name'        => $taskToEdit['task_name'],
             'description' => $taskToEdit['task_description'],
         ];
+    } else {
+        // Task not found (bad ?edit= id): fall back to the normal "Add" form
+        $editId = null;
     }
 }
 
@@ -201,7 +206,7 @@ $today     = new DateTimeImmutable('now');
 
 <div class="app">
 
-    <!-- Sidebar -->
+    <!-- Sidebar navigation (landmark: aside) -->
     <aside class="sidebar" id="sidebar" aria-label="Sidebar">
         <div class="sidebar-head">
             <a class="brand" href="index.php?view=todo">
@@ -218,6 +223,7 @@ $today     = new DateTimeImmutable('now');
             <span aria-hidden="true">+</span><span class="btn-label"> New Task</span>
         </button>
 
+        <!-- Links to the three views (landmark: nav) -->
         <nav class="nav" aria-label="Task views">
             <ul>
                 <?php foreach ($views as $key => $info): ?>
@@ -237,7 +243,7 @@ $today     = new DateTimeImmutable('now');
 
     <div class="content">
 
-        <!-- Top bar -->
+        <!-- Top bar: page title and today's date (landmark: header) -->
         <header class="topbar">
             <button type="button" class="icon-btn menu-btn" data-open-drawer
                     aria-label="Open menu" aria-controls="sidebar" aria-expanded="false">
@@ -252,9 +258,10 @@ $today     = new DateTimeImmutable('now');
             </p>
         </header>
 
+        <!-- Main content (landmark: main) -->
         <main class="main">
 
-            <!-- Summary -->
+            <!-- Summary counts (dl = term/value pairs) -->
             <section class="stats" aria-label="Task summary">
                 <dl class="stat">
                     <dt>Total Tasks</dt>
@@ -306,6 +313,7 @@ $today     = new DateTimeImmutable('now');
 
                                     <form method="POST" class="task-check">
                                         <input type="hidden" name="action" value="toggle">
+                                        <!-- Hidden id tells the server which task to toggle -->
                                         <input type="hidden" name="id" value="<?= (int) $task['id'] ?>">
                                         <button type="submit" class="check"
                                                 aria-label="<?= e(($task['completed'] ? 'Move back to To-do: ' : 'Mark as completed: ') . $task['name']) ?>">
@@ -326,6 +334,7 @@ $today     = new DateTimeImmutable('now');
                                               data-confirm-title="Delete task?"
                                               data-confirm-text="Are you sure you want to delete this task?">
                                             <input type="hidden" name="action" value="delete">
+                                            <!-- Hidden id tells the server which task to delete -->
                                             <input type="hidden" name="id" value="<?= (int) $task['id'] ?>">
                                             <button type="submit" class="btn btn-danger">Delete</button>
                                         </form>
@@ -349,6 +358,7 @@ $today     = new DateTimeImmutable('now');
 
                     <form method="POST" novalidate>
                         <input type="hidden" name="action" value="<?= $isEditing ? 'update' : 'add' ?>">
+                        <!-- Hidden id is only sent when editing; a new task has no id yet -->
                         <?php if ($isEditing): ?>
                             <input type="hidden" name="id" value="<?= (int) $editId ?>">
                         <?php endif; ?>
@@ -390,7 +400,7 @@ $today     = new DateTimeImmutable('now');
 
 <div class="backdrop" data-backdrop></div>
 
-<!-- Confirmation dialog -->
+<!-- Confirmation dialog (text is filled in by script.js) -->
 <dialog class="dialog" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
     <h2 id="confirm-title">Delete task?</h2>
     <p id="confirm-text">Are you sure you want to delete this task?</p>
