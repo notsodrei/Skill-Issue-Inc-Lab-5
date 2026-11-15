@@ -1,46 +1,43 @@
 /* ==========================================================================
    To-do List Web App - script.js
-   Basic DOM event handling:
-   - mobile drawer and bottom sheet (open / close)
-   - confirmation dialog for Delete and Clear Completed
-   - clears a field's error styling as soon as the user starts fixing it
+   What this file does:
+   1. Opens and closes the sidebar drawer (mobile)
+   2. Opens and closes the task form as a bottom sheet (mobile)
+   3. Shows a confirmation dialog before Delete / Clear Completed
+   4. Removes a field's error message as soon as the user starts typing
+   5. Focuses the form when it has errors or is in edit mode
    ========================================================================== */
 
 (function () {
     'use strict';
 
-    var body = document.body;
+    /* ---------- Elements we use throughout the file ---------- */
+
+    var body        = document.body;
+    var panel       = document.getElementById('task-panel');
+    var nameInput   = document.getElementById('task_name');
+    var menuButton  = document.querySelector('[data-open-drawer]');
+    var dialog      = document.getElementById('confirm-dialog');
     var mobileQuery = window.matchMedia('(max-width: 640px)');
 
-    var panel = document.getElementById('task-panel');
-    var nameInput = document.getElementById('task_name');
-    var menuButton = document.querySelector('[data-open-drawer]');
-    var dialog = document.getElementById('confirm-dialog');
+    // The form waiting for the user to confirm (Delete / Clear Completed)
+    var pendingForm = null;
 
+    // True when the screen is phone-sized
     function isMobile() {
         return mobileQuery.matches;
     }
 
-    /* ---------- Drawer (mobile sidebar) ---------- */
+    /* ---------- 1. Sidebar drawer (mobile) ---------- */
 
-    function openDrawer() {
-        body.classList.add('drawer-open');
+    function setDrawer(open) {
+        body.classList.toggle('drawer-open', open);
         if (menuButton) {
-            menuButton.setAttribute('aria-expanded', 'true');
+            menuButton.setAttribute('aria-expanded', open ? 'true' : 'false');
         }
     }
 
-    function closeDrawer() {
-        body.classList.remove('drawer-open');
-        if (menuButton) {
-            menuButton.setAttribute('aria-expanded', 'false');
-            if (isMobile()) {
-                menuButton.focus();
-            }
-        }
-    }
-
-    /* ---------- Bottom sheet (mobile task form) ---------- */
+    /* ---------- 2. Task form bottom sheet (mobile) ---------- */
 
     function openSheet() {
         body.classList.add('sheet-open');
@@ -50,15 +47,15 @@
     }
 
     function closeSheet() {
-        // While editing, closing the sheet means cancelling the edit
+        // In edit mode, closing the sheet means cancelling the edit
         if (panel && panel.dataset.mode === 'edit') {
             window.location.href = panel.dataset.cancelUrl;
-            return;
+        } else {
+            body.classList.remove('sheet-open');
         }
-        body.classList.remove('sheet-open');
     }
 
-    /* ---------- Click handling (event delegation) ---------- */
+    /* ---------- Click handling (one listener for all buttons) ---------- */
 
     document.addEventListener('click', function (event) {
         var target = event.target;
@@ -66,42 +63,44 @@
             return;
         }
 
+        // Hamburger button -> open drawer
         if (target.closest('[data-open-drawer]')) {
-            openDrawer();
+            setDrawer(true);
             return;
         }
 
+        // X button inside the drawer -> close drawer
         if (target.closest('[data-close-drawer]')) {
-            closeDrawer();
+            setDrawer(false);
             return;
         }
 
+        // X button on the form -> close sheet
         if (target.closest('[data-close-sheet]')) {
             closeSheet();
             return;
         }
 
+        // Dark area behind the drawer or sheet -> close whichever is open
         if (target.closest('[data-backdrop]')) {
             if (body.classList.contains('drawer-open')) {
-                closeDrawer();
-            } else if (body.classList.contains('sheet-open')) {
+                setDrawer(false);
+            } else {
                 closeSheet();
             }
             return;
         }
 
+        // "New Task" buttons
         var newTaskButton = target.closest('[data-new-task]');
         if (newTaskButton) {
-            // Leave edit mode first, then come back with a blank form
+            // If we are editing, reload with a blank form
             if (panel && panel.dataset.mode === 'edit') {
                 window.location.href = newTaskButton.dataset.newUrl;
                 return;
             }
 
-            body.classList.remove('drawer-open');
-            if (menuButton) {
-                menuButton.setAttribute('aria-expanded', 'false');
-            }
+            setDrawer(false);
 
             if (isMobile()) {
                 openSheet();
@@ -112,45 +111,43 @@
         }
     });
 
+    // Escape key closes the drawer or sheet (the dialog handles its own Escape)
     document.addEventListener('keydown', function (event) {
         if (event.key !== 'Escape' || (dialog && dialog.open)) {
             return;
         }
         if (body.classList.contains('drawer-open')) {
-            closeDrawer();
+            setDrawer(false);
         } else if (isMobile() && body.classList.contains('sheet-open')) {
             closeSheet();
         }
     });
 
-    // Close the drawer if the screen grows past the mobile breakpoint
+    // Close the drawer if the screen is resized past the mobile size
     mobileQuery.addEventListener('change', function () {
-        body.classList.remove('drawer-open');
-        if (menuButton) {
-            menuButton.setAttribute('aria-expanded', 'false');
-        }
+        setDrawer(false);
     });
 
-    /* ---------- Confirmation dialog (Delete / Clear Completed) ---------- */
-
-    var pendingForm = null;
+    /* ---------- 3. Confirmation dialog (Delete / Clear Completed) ---------- */
 
     if (dialog) {
         var dialogTitle = document.getElementById('confirm-title');
-        var dialogText = document.getElementById('confirm-text');
+        var dialogText  = document.getElementById('confirm-text');
 
+        // Intercept any form marked with data-confirm
         document.addEventListener('submit', function (event) {
             var form = event.target;
             if (!(form instanceof HTMLFormElement) || !form.hasAttribute('data-confirm')) {
                 return;
             }
 
+            // Stop the form until the user confirms
             event.preventDefault();
 
             var title = form.dataset.confirmTitle || 'Are you sure?';
-            var text = form.dataset.confirmText || '';
+            var text  = form.dataset.confirmText || '';
 
-            // Older browsers without <dialog> support fall back to window.confirm
+            // Old browsers without <dialog>: use the basic confirm box
             if (typeof dialog.showModal !== 'function') {
                 if (window.confirm(title + '\n' + text)) {
                     form.submit();
@@ -158,37 +155,43 @@
                 return;
             }
 
+            // Show the dialog with this form's message
             pendingForm = form;
             dialogTitle.textContent = title;
-            dialogText.textContent = text;
+            dialogText.textContent  = text;
             dialog.showModal();
         });
 
+        // Buttons inside the dialog
         dialog.addEventListener('click', function (event) {
             var target = event.target;
-
-            if (target === dialog || (target instanceof Element && target.closest('[data-dialog-cancel]'))) {
-                pendingForm = null;
-                dialog.close();
+            if (!(target instanceof Element)) {
                 return;
             }
 
-            if (target instanceof Element && target.closest('[data-dialog-confirm]')) {
+            // Confirm -> submit the form that was waiting
+            if (target.closest('[data-dialog-confirm]')) {
                 var form = pendingForm;
-                pendingForm = null;
                 dialog.close();
                 if (form) {
                     form.submit();
                 }
+                return;
+            }
+
+            // Cancel button or click on the dark backdrop -> just close
+            if (target === dialog || target.closest('[data-dialog-cancel]')) {
+                dialog.close();
             }
         });
 
+        // Whenever the dialog closes, forget the waiting form
         dialog.addEventListener('close', function () {
             pendingForm = null;
         });
     }
 
-    /* ---------- Clear a field's error once the user edits it ---------- */
+    /* ---------- 4. Clear a field's error when the user types ---------- */
 
     document.addEventListener('input', function (event) {
         var field = event.target;
@@ -201,6 +204,7 @@
             return;
         }
 
+        // Remove the red styling, accessibility flags and the message
         wrapper.classList.remove('field--error');
         field.removeAttribute('aria-invalid');
         field.removeAttribute('aria-describedby');
@@ -211,12 +215,14 @@
         }
     });
 
-    /* ---------- Initial focus ---------- */
+    /* ---------- 5. Initial focus ---------- */
 
+    // PHP sets data-focus-form="true" when the form has errors or is in edit mode
     if (body.dataset.focusForm === 'true') {
         var firstInvalid = document.querySelector('[aria-invalid="true"]');
-        var focusTarget = firstInvalid || nameInput;
+        var focusTarget  = firstInvalid || nameInput;
 
+        // On mobile, only focus if the sheet is actually open
         if (focusTarget && (!isMobile() || body.classList.contains('sheet-open'))) {
             focusTarget.focus({ preventScroll: true });
         }
