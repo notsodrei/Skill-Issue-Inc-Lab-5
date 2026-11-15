@@ -1,40 +1,30 @@
 <?php
 /**
  * Lab Activity 4: To-do List Web App (COMP016 - Web Development)
- * Single-page task manager: Create, Read, Update, Delete using PHP Sessions.
+ * Single-page task manager: Create, Read, Update, Delete using PDO.
  */
 
-// 1. Session management: must run before any HTML output
-session_start();
+// 1. Database connection (Replaces session_start)
+require_once 'db.php';
 date_default_timezone_set('Asia/Manila');
 
 const NAME_MIN = 3;
 const NAME_MAX = 100;
 const DESC_MAX = 255;
 
-$_SESSION['tasks']   = $_SESSION['tasks']   ?? [];
-$_SESSION['next_id'] = $_SESSION['next_id'] ?? 1;
-
 /* ---------- Helpers ---------- */
 
-// XSS protection: escape everything that is printed back to the page
-function e(string $value): string
-{
+function e(string $value): string {
     return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
 }
 
-// Extraction + trimming of a POST field (always returns a string)
-function post_string(string $key): string
-{
+function post_string(string $key): string {
     $value = $_POST[$key] ?? '';
     return is_string($value) ? trim($value) : '';
 }
 
-// Server-side validation: returns an array of error messages keyed by field
-function validate_task(string $name, string $description): array
-{
+function validate_task(string $name, string $description): array {
     $errors = [];
-
     if ($name === '') {
         $errors['name'] = 'Task Name cannot be empty.';
     } elseif (mb_strlen($name) < NAME_MIN) {
@@ -48,18 +38,15 @@ function validate_task(string $name, string $description): array
     } elseif (mb_strlen($description) > DESC_MAX) {
         $errors['description'] = 'Task Description cannot exceed ' . DESC_MAX . ' characters.';
     }
-
     return $errors;
 }
 
-function redirect_to(string $view): void
-{
+function redirect_to(string $view): void {
     header('Location: index.php?view=' . urlencode($view));
     exit();
 }
 
-function icon(string $name): string
-{
+function icon(string $name): string {
     $paths = [
         'logo'  => '<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>',
         'check' => '<circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/>',
@@ -69,36 +56,15 @@ function icon(string $name): string
         'close' => '<path d="M6 6l12 12M18 6 6 18"/>',
         'tick'  => '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
     ];
-
-    return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" '
-        . 'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
-        . ($paths[$name] ?? '') . '</svg>';
+    return '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">' . ($paths[$name] ?? '') . '</svg>';
 }
 
 /* ---------- View + edit target (GET) ---------- */
 
 $views = [
-    'all' => [
-        'title'   => 'All Tasks',
-        'nav'     => 'All Tasks',
-        'heading' => 'All tasks',
-        'empty'   => 'No tasks yet.',
-        'icon'    => 'all',
-    ],
-    'todo' => [
-        'title'   => 'To-do',
-        'nav'     => 'To-do',
-        'heading' => 'Tasks to do',
-        'empty'   => "No tasks to do. You're all caught up!",
-        'icon'    => 'todo',
-    ],
-    'completed' => [
-        'title'   => 'Completed',
-        'nav'     => 'Completed',
-        'heading' => 'Completed tasks',
-        'empty'   => 'No completed tasks yet.',
-        'icon'    => 'check',
-    ],
+    'all' => ['title' => 'All Tasks', 'nav' => 'All Tasks', 'heading' => 'All tasks', 'empty' => 'No tasks yet.', 'icon' => 'all'],
+    'todo' => ['title' => 'To-do', 'nav' => 'To-do', 'heading' => 'Tasks to do', 'empty' => "No tasks to do. You're all caught up!", 'icon' => 'todo'],
+    'completed' => ['title' => 'Completed', 'nav' => 'Completed', 'heading' => 'Completed tasks', 'empty' => 'No completed tasks yet.', 'icon' => 'check'],
 ];
 
 $view = $_GET['view'] ?? 'todo';
@@ -107,8 +73,7 @@ if (!is_string($view) || !isset($views[$view])) {
 }
 
 $editId = null;
-if (isset($_GET['edit']) && is_string($_GET['edit']) && ctype_digit($_GET['edit'])
-    && isset($_SESSION['tasks'][(int) $_GET['edit']])) {
+if (isset($_GET['edit']) && is_string($_GET['edit']) && ctype_digit($_GET['edit'])) {
     $editId = (int) $_GET['edit'];
 }
 
@@ -118,7 +83,6 @@ $errors    = [];
 $old       = ['name' => '', 'description' => ''];
 $postedOld = false;
 
-// Request guarding: only act on POST requests
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = post_string('action');
     $id     = (int) post_string('id');
@@ -130,13 +94,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors      = validate_task($name, $description);
 
             if (!$errors) {
-                $newId = $_SESSION['next_id']++;
-                $_SESSION['tasks'][$newId] = [
-                    'id'          => $newId,
-                    'name'        => $name,
-                    'description' => $description,
-                    'completed'   => false,
-                ];
+                // ERIN'S PART: CREATE (INSERT)
+                $stmt = $pdo->prepare("INSERT INTO tasks (task_name, task_description, status) VALUES (:name, :desc, 'pending')");
+                $stmt->execute([
+                    'name' => $name,
+                    'desc' => $description
+                ]);
                 redirect_to($view);
             }
 
@@ -145,42 +108,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             break;
 
         case 'update':
-            if (!isset($_SESSION['tasks'][$id])) {
-                redirect_to($view);
-            }
-
-            $name        = post_string('task_name');
-            $description = post_string('task_description');
-            $errors      = validate_task($name, $description);
-
-            if (!$errors) {
-                $_SESSION['tasks'][$id]['name']        = $name;
-                $_SESSION['tasks'][$id]['description'] = $description;
-                redirect_to($view);
-            }
-
-            $editId    = $id;
-            $old       = ['name' => $name, 'description' => $description];
-            $postedOld = true;
+            // TODO: Teammates will add UPDATE PDO query here
+            redirect_to($view);
             break;
 
         case 'toggle':
-            if (isset($_SESSION['tasks'][$id])) {
-                $_SESSION['tasks'][$id]['completed'] = !$_SESSION['tasks'][$id]['completed'];
-            }
+            // TODO: Teammates will add toggle (UPDATE status) PDO query here
             redirect_to($view);
             break;
 
         case 'delete':
-            unset($_SESSION['tasks'][$id]);
+            // TODO: Teammates will add DELETE PDO query here
             redirect_to($view);
             break;
 
         case 'clear_completed':
-            $_SESSION['tasks'] = array_filter(
-                $_SESSION['tasks'],
-                fn(array $task): bool => !$task['completed']
-            );
+            // TODO: Teammates will add DELETE where status='completed' PDO query here
             redirect_to($view);
             break;
 
@@ -189,17 +132,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Pre-fill the form when editing (and the task has not just failed validation)
+// Pre-fill the form when editing 
 if ($editId !== null && !$postedOld) {
-    $old = [
-        'name'        => $_SESSION['tasks'][$editId]['name'],
-        'description' => $_SESSION['tasks'][$editId]['description'],
-    ];
+    $stmt = $pdo->prepare("SELECT task_name, task_description FROM tasks WHERE id = :id");
+    $stmt->execute(['id' => $editId]);
+    $taskToEdit = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($taskToEdit) {
+        $old = [
+            'name'        => $taskToEdit['task_name'],
+            'description' => $taskToEdit['task_description'],
+        ];
+    }
 }
 
 /* ---------- Data for rendering ---------- */
 
-$allTasks = array_values($_SESSION['tasks']);
+// ERIN'S PART: READ (SELECT)
+$stmt = $pdo->query("SELECT * FROM tasks ORDER BY created_at ASC");
+$dbTasks = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+$allTasks = [];
+foreach ($dbTasks as $row) {
+    $allTasks[] = [
+        'id'          => (int) $row['id'],
+        'name'        => $row['task_name'],
+        'description' => $row['task_description'],
+        'completed'   => ($row['status'] === 'completed')
+    ];
+}
+
 $counts   = [
     'all'       => count($allTasks),
     'todo'      => count(array_filter($allTasks, fn(array $t): bool => !$t['completed'])),
@@ -215,7 +177,6 @@ $visibleTasks = array_values(array_filter(
     }
 ));
 
-// In "All Tasks", show to-do items first, then completed ones
 if ($view === 'all') {
     usort($visibleTasks, fn(array $a, array $b): int => $a['completed'] <=> $b['completed']);
 }
@@ -240,7 +201,7 @@ $today     = new DateTimeImmutable('now');
 
 <div class="app">
 
-    <!-- Sidebar (drawer on mobile, icon rail on tablet) -->
+    <!-- Sidebar -->
     <aside class="sidebar" id="sidebar" aria-label="Sidebar">
         <div class="sidebar-head">
             <a class="brand" href="index.php?view=todo">
@@ -375,7 +336,7 @@ $today     = new DateTimeImmutable('now');
                     <?php endif; ?>
                 </section>
 
-                <!-- Task form (Create / Update): card on desktop + tablet, bottom sheet on mobile -->
+                <!-- Task form (Create / Update) -->
                 <section class="panel" id="task-panel" aria-labelledby="panel-title"
                          data-mode="<?= $isEditing ? 'edit' : 'add' ?>"
                          data-cancel-url="index.php?view=<?= e($view) ?>">
@@ -386,7 +347,6 @@ $today     = new DateTimeImmutable('now');
                         </button>
                     </div>
 
-                    <!-- Self-submitting form: no action attribute, so it posts back to this page -->
                     <form method="POST" novalidate>
                         <input type="hidden" name="action" value="<?= $isEditing ? 'update' : 'add' ?>">
                         <?php if ($isEditing): ?>
@@ -430,7 +390,7 @@ $today     = new DateTimeImmutable('now');
 
 <div class="backdrop" data-backdrop></div>
 
-<!-- Confirmation dialog (used for Delete and Clear Completed) -->
+<!-- Confirmation dialog -->
 <dialog class="dialog" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-text">
     <h2 id="confirm-title">Delete task?</h2>
     <p id="confirm-text">Are you sure you want to delete this task?</p>
